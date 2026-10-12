@@ -1,0 +1,2187 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BodegaPOS - Sistema Avanzado de Ventas e Inventario</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- HTML5 QR / Barcode Scanner Library -->
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- SheetJS (XLSX Export) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: #0f172a;
+      color: #f8fafc;
+    }
+    
+    #reader video, #reg-reader video, #photo-capture-reader video {
+      border-radius: 0.75rem;
+      object-fit: cover !important;
+      width: 100% !important;
+    }
+    
+    .scanner-laser {
+      position: absolute;
+      top: 50%;
+      left: 10%;
+      right: 10%;
+      height: 2px;
+      background: #ef4444;
+      box-shadow: 0 0 8px #ef4444;
+      animation: scan 2s infinite ease-in-out;
+      z-index: 10;
+      pointer-events: none;
+    }
+
+    @keyframes scan {
+      0%, 100% { transform: translateY(-40px); opacity: 0.3; }
+      50% { transform: translateY(40px); opacity: 1; }
+    }
+
+    /* Print styling for Boletas */
+    @media print {
+      body * {
+        visibility: hidden;
+      }
+      #printable-boleta, #printable-boleta *, #printable-abono-boleta, #printable-abono-boleta * {
+        visibility: visible;
+      }
+      #printable-boleta, #printable-abono-boleta {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        color: #000 !important;
+        background: #fff !important;
+        padding: 15px;
+      }
+      .no-print {
+        display: none !important;
+      }
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col antialiased selection:bg-cyan-500 selection:text-white">
+
+  <!-- Header / Navigation -->
+  <header class="bg-slate-900/80 backdrop-blur-md border-b border-slate-800 sticky top-0 z-30">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="flex items-center justify-between h-16">
+        <div class="flex items-center gap-3">
+          <div class="bg-gradient-to-tr from-cyan-500 to-blue-600 p-2 rounded-xl shadow-lg shadow-cyan-500/20">
+            <i data-lucide="shopping-bag" class="w-6 h-6 text-white"></i>
+          </div>
+          <div>
+            <h1 class="font-bold text-lg text-slate-100 tracking-tight leading-none">Bodega<span class="text-cyan-400">POS</span></h1>
+            <p class="text-xs text-slate-400 mt-0.5">Control de Caja & Inventario</p>
+          </div>
+        </div>
+
+        <!-- Navigation Tabs -->
+        <nav class="flex gap-1 bg-slate-800/60 p-1 rounded-xl border border-slate-700/50">
+          <button id="tab-pos" onclick="switchTab('pos')" class="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg text-sm font-medium transition-all bg-cyan-500 text-white shadow-md shadow-cyan-500/20">
+            <i data-lucide="scan-barcode" class="w-4 h-4"></i>
+            <span class="hidden sm:inline">Ventas (POS)</span>
+          </button>
+          <button id="tab-inventory" onclick="switchTab('inventory')" class="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg text-sm font-medium transition-all text-slate-400 hover:text-slate-200 hover:bg-slate-700/50">
+            <i data-lucide="boxes" class="w-4 h-4"></i>
+            <span class="hidden sm:inline">Inventario</span>
+          </button>
+          <button id="tab-credits" onclick="switchTab('credits')" class="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg text-sm font-medium transition-all text-slate-400 hover:text-slate-200 hover:bg-slate-700/50">
+            <i data-lucide="users" class="w-4 h-4"></i>
+            <span class="hidden sm:inline">Fiados</span>
+          </button>
+          <button id="tab-sales" onclick="switchTab('sales')" class="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg text-sm font-medium transition-all text-slate-400 hover:text-slate-200 hover:bg-slate-700/50">
+            <i data-lucide="receipt" class="w-4 h-4"></i>
+            <span class="hidden sm:inline">Reportes</span>
+          </button>
+        </nav>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content Area -->
+  <main class="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
+    
+    <!-- ALERT BANNER FOR HTTPS / CAMERA PERMISSIONS -->
+    <div id="https-alert" class="hidden mb-6 p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-sm flex items-start justify-between gap-3">
+      <div class="flex items-start gap-3">
+        <i data-lucide="alert-triangle" class="w-5 h-5 flex-shrink-0 mt-0.5 text-amber-400"></i>
+        <div>
+          <strong class="font-semibold block mb-0.5">Atención con la Cámara:</strong>
+          Para activar la cámara en teléfonos, necesitas abrir este archivo a través de un servidor seguro (<strong>HTTPS</strong>) o desde <code>localhost</code> en tu PC.
+        </div>
+      </div>
+      <button onclick="dismissHttpsAlert()" class="text-amber-400 hover:text-amber-200 p-1 rounded-lg transition" title="Cerrar aviso">
+        <i data-lucide="x" class="w-4 h-4"></i>
+      </button>
+    </div>
+
+    <!-- GLOBAL BACKUP BAR -->
+    <div class="mb-6 p-4 bg-slate-900 border border-slate-800 rounded-2xl shadow-xl flex flex-col sm:flex-row justify-between items-center gap-3">
+      <div class="flex items-center gap-2 text-xs text-slate-300">
+        <i data-lucide="database" class="w-4 h-4 text-cyan-400"></i>
+        <span>Sincronización manual entre teléfonos (Fusión Inteligente JSON)</span>
+      </div>
+      <div class="flex gap-2 w-full sm:w-auto">
+        <button onclick="exportJSONBackup()" class="flex-1 sm:flex-none px-3 py-1.5 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 rounded-xl text-xs font-semibold transition flex items-center justify-center gap-1.5">
+          <i data-lucide="download" class="w-3.5 h-3.5"></i> Exportar Respaldo
+        </button>
+        <label class="flex-1 sm:flex-none px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-semibold transition flex items-center justify-center gap-1.5 cursor-pointer">
+          <i data-lucide="upload" class="w-3.5 h-3.5"></i> Fusionar Respaldo
+          <input type="file" id="json-file-input" accept=".json" onchange="importJSONBackup(event)" class="hidden" />
+        </label>
+      </div>
+    </div>
+
+    <!-- ==================== TAB 1: POS / VENTAS ==================== -->
+    <section id="view-pos" class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      
+      <!-- Left Column: Camera Scanner & Product Search -->
+      <div class="lg:col-span-7 flex flex-col gap-6">
+        
+        <!-- Camera Scanner Card -->
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl relative overflow-hidden">
+          <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center gap-2 text-slate-200 font-semibold text-sm">
+              <i data-lucide="camera" class="w-4 h-4 text-cyan-400"></i>
+              <span>Escanear Código con Cámara</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <select id="camera-select" class="bg-slate-800 border border-slate-700 text-xs text-slate-300 rounded-lg px-2 py-1 outline-none focus:border-cyan-500">
+                <option value="">Cargando cámaras...</option>
+              </select>
+              <button id="btn-toggle-cam" onclick="toggleCamera()" class="px-3 py-1 bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 border border-cyan-500/30 rounded-lg text-xs font-semibold transition">
+                Iniciar Cámara
+              </button>
+            </div>
+          </div>
+
+          <!-- Video Reader Area -->
+          <div class="relative bg-slate-950 border border-slate-800 rounded-xl overflow-hidden min-h-[180px] flex items-center justify-center">
+            <div id="reader" class="w-full"></div>
+            <div id="scanner-laser" class="scanner-laser hidden"></div>
+            <div id="cam-placeholder" class="text-center p-6 text-slate-500">
+              <i data-lucide="qr-code" class="w-10 h-10 mx-auto mb-2 opacity-40"></i>
+              <p class="text-xs">Presiona "Iniciar Cámara" para escanear productos</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Product Search & Quick Catalog Grid -->
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl flex-1 flex flex-col">
+          <div class="flex flex-col sm:flex-row gap-3 mb-4">
+            <div class="relative flex-1">
+              <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-3 text-slate-500"></i>
+              <input id="search-input" oninput="renderProductCatalog()" type="text" placeholder="Buscar por nombre, código, proveedor o estante..." class="w-full bg-slate-950 border border-slate-800 text-slate-100 text-sm rounded-xl pl-10 pr-4 py-2.5 outline-none focus:border-cyan-500 transition" />
+            </div>
+            <div class="relative">
+              <i data-lucide="barcode" class="w-4 h-4 absolute left-3.5 top-3 text-slate-500"></i>
+              <input id="barcode-manual-input" onkeypress="handleManualBarcodeKeyPress(event)" type="text" placeholder="Código de barra manual..." class="w-full sm:w-56 bg-slate-950 border border-slate-800 text-slate-100 text-sm rounded-xl pl-10 pr-4 py-2.5 outline-none focus:border-cyan-500 transition" />
+            </div>
+          </div>
+
+          <!-- Catalog Cards -->
+          <div id="catalog-grid" class="grid grid-cols-2 sm:grid-cols-3 gap-3 overflow-y-auto max-h-[380px] pr-1">
+            <!-- Dynamic product cards render here -->
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Column: Current Sales Cart -->
+      <div class="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col justify-between h-full">
+        <div>
+          <div class="flex items-center justify-between pb-4 border-b border-slate-800 mb-4">
+            <div class="flex items-center gap-2">
+              <i data-lucide="shopping-cart" class="w-5 h-5 text-cyan-400"></i>
+              <h2 class="font-bold text-slate-100 text-base">Carrito de Ventas</h2>
+            </div>
+            <button onclick="clearCart()" class="text-xs text-rose-400 hover:text-rose-300 font-medium transition">
+              Vaciar
+            </button>
+          </div>
+
+          <!-- Cart Items List -->
+          <div id="cart-items" class="space-y-3 overflow-y-auto max-h-[220px] pr-1 mb-3">
+            <!-- Dynamic cart rows -->
+          </div>
+        </div>
+
+        <!-- Checkout & Payment Calculation -->
+        <div class="pt-3 border-t border-slate-800 space-y-2.5">
+          
+          <!-- Discount Selector -->
+          <div class="flex items-center justify-between gap-2 bg-slate-950 p-2 rounded-xl border border-slate-800">
+            <span class="text-xs text-slate-400 font-medium flex items-center gap-1">
+              <i data-lucide="percent" class="w-3.5 h-3.5 text-cyan-400"></i> Descuento:
+            </span>
+            <div class="flex items-center gap-1.5">
+              <input id="discount-val" oninput="renderCart()" type="number" min="0" step="0.01" placeholder="0" class="w-16 bg-slate-900 border border-slate-700 text-slate-100 text-xs rounded-lg px-2 py-1 text-center outline-none focus:border-cyan-500" />
+              <select id="discount-type" onchange="renderCart()" class="bg-slate-900 border border-slate-700 text-xs text-slate-200 rounded-lg px-2 py-1 outline-none">
+                <option value="fixed">S/</option>
+                <option value="percent">%</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="space-y-0.5">
+            <div class="flex justify-between text-xs text-slate-400">
+              <span>Subtotal</span>
+              <span id="cart-subtotal">S/ 0.00</span>
+            </div>
+            <div id="row-discount" class="flex justify-between text-xs text-emerald-400 hidden">
+              <span>Descuento aplicado</span>
+              <span id="cart-discount-text">-S/ 0.00</span>
+            </div>
+            <div class="flex justify-between text-lg font-bold text-slate-100 pt-0.5">
+              <span>Total a Cobrar</span>
+              <span id="cart-total" class="text-cyan-400 text-xl">S/ 0.00</span>
+            </div>
+          </div>
+
+          <!-- Payment Method Selector -->
+          <div class="grid grid-cols-3 gap-2">
+            <button id="pay-type-cash" onclick="setPaymentMethod('cash')" class="py-2 px-2 border rounded-xl font-medium text-xs flex items-center justify-center gap-1.5 border-cyan-500 bg-cyan-500/10 text-cyan-400">
+              <i data-lucide="banknote" class="w-3.5 h-3.5"></i> Efectivo
+            </button>
+            <button id="pay-type-yape" onclick="setPaymentMethod('yape')" class="py-2 px-2 border rounded-xl font-medium text-xs flex items-center justify-center gap-1.5 border-slate-800 bg-slate-950 text-slate-400">
+              <i data-lucide="qr-code" class="w-3.5 h-3.5"></i> Yape / Plin
+            </button>
+            <button id="pay-type-credit" onclick="setPaymentMethod('credit')" class="py-2 px-2 border rounded-xl font-medium text-xs flex items-center justify-center gap-1.5 border-slate-800 bg-slate-950 text-slate-400">
+              <i data-lucide="user-check" class="w-3.5 h-3.5"></i> Fiado
+            </button>
+          </div>
+
+          <!-- Optional Customer Name for Cash / Yape -->
+          <div id="cash-client-name-box">
+            <input id="cash-client-name" type="text" placeholder="Nombre cliente (opcional para boleta)..." class="w-full bg-slate-950 border border-slate-800 text-slate-100 text-xs rounded-xl px-3 py-1.5 outline-none focus:border-cyan-500" />
+          </div>
+
+          <!-- Cash Calculation Controls -->
+          <div id="cash-calculator-box" class="space-y-1.5">
+            <div class="flex gap-2">
+              <input id="cash-given" oninput="calculateChange()" type="number" step="0.10" placeholder="Monto pagado S/" class="flex-1 bg-slate-950 border border-slate-800 text-slate-100 text-sm rounded-xl px-3 py-1.5 outline-none focus:border-cyan-500" />
+              <div class="flex gap-1">
+                <button onclick="quickCash(10)" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700">10</button>
+                <button onclick="quickCash(20)" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700">20</button>
+                <button onclick="quickCash(50)" class="hidden sm:inline-block px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700">50</button>
+              </div>
+            </div>
+            <div class="flex justify-between items-center bg-slate-950 p-2 rounded-xl border border-slate-800 text-sm">
+              <span class="text-slate-400 text-xs">Vuelto:</span>
+              <span id="cash-change" class="font-bold text-emerald-400 text-sm">S/ 0.00</span>
+            </div>
+          </div>
+
+          <!-- Client Credit Selector -->
+          <div id="credit-client-box" class="space-y-2 hidden">
+            <div class="flex gap-2">
+              <select id="credit-client-select" class="flex-1 bg-slate-950 border border-slate-800 text-slate-100 text-xs rounded-xl px-3 py-2 outline-none focus:border-cyan-500">
+                <option value="">Seleccionar Cliente...</option>
+              </select>
+              <button onclick="openNewClientPrompt()" class="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold border border-slate-700">
+                + Nuevo
+              </button>
+            </div>
+            <!-- Manual Partial Cash Entry for Fiado -->
+            <div class="bg-slate-950 p-2 rounded-xl border border-slate-800 space-y-1">
+              <div class="flex items-center justify-between text-xs">
+                <span class="text-slate-300 font-medium">Monto pagado hoy al contado (S/):</span>
+                <input id="credit-cash-paid" type="number" min="0" step="0.10" placeholder="0.00" class="w-24 bg-slate-900 border border-slate-700 text-slate-100 text-xs rounded-lg px-2 py-1 text-right outline-none focus:border-cyan-500" />
+              </div>
+              <p class="text-[10px] text-slate-500">Puedes ingresar el monto en efectivo o usar los botones [Contado/Fiado] de arriba.</p>
+            </div>
+          </div>
+
+          <button onclick="processCheckout()" class="w-full py-2.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-bold rounded-xl shadow-lg shadow-emerald-500/20 transition flex items-center justify-center gap-2 text-sm">
+            <i data-lucide="check-circle-2" class="w-5 h-5"></i>
+            Finalizar Venta
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== TAB 2: INVENTARIO ==================== -->
+    <section id="view-inventory" class="hidden space-y-6">
+      <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-xl">
+        <div>
+          <h2 class="text-lg font-bold text-slate-100">Gestión de Inventario</h2>
+          <p class="text-xs text-slate-400">Agrega, edita y gestiona proveedores, fotos, estantes y existencias</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <button onclick="exportToExcel('inventory')" class="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-xl text-xs transition flex items-center gap-1.5 shadow-md shadow-emerald-600/20">
+            <i data-lucide="file-spreadsheet" class="w-4 h-4"></i>
+            Exportar Excel
+          </button>
+          <button onclick="openProductModal()" class="px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-white font-semibold rounded-xl text-xs transition flex items-center gap-2 shadow-lg shadow-cyan-500/20">
+            <i data-lucide="plus-circle" class="w-4 h-4"></i>
+            Nuevo Producto
+          </button>
+        </div>
+      </div>
+
+      <!-- Table Card -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl shadow-xl overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-sm text-slate-300">
+            <thead class="bg-slate-950 text-slate-400 text-xs uppercase border-b border-slate-800">
+              <tr>
+                <th class="px-4 py-3">Foto</th>
+                <th class="px-4 py-3">Código</th>
+                <th class="px-4 py-3">Producto</th>
+                <th class="px-4 py-3">Ubicación</th>
+                <th class="px-4 py-3">Proveedor</th>
+                <th class="px-4 py-3">Costo</th>
+                <th class="px-4 py-3">P. Venta</th>
+                <th class="px-4 py-3">Margen</th>
+                <th class="px-4 py-3">Stock</th>
+                <th class="px-4 py-3">Vendidos (Mes)</th>
+                <th class="px-4 py-3 text-right">Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="inventory-table-body" class="divide-y divide-slate-800/60">
+              <!-- Dynamic inventory rows -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== TAB 3: FIADOS / CREDITOS ==================== -->
+    <section id="view-credits" class="hidden space-y-6">
+      <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-xl">
+        <div>
+          <h2 class="text-lg font-bold text-slate-100">Control de Clientes & Fiados</h2>
+          <p class="text-xs text-slate-400">Gestión de cuentas por cobrar, productos entregados y abonos</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <button onclick="exportToExcel('credits')" class="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-xl text-xs transition flex items-center gap-1.5 shadow-md shadow-emerald-600/20">
+            <i data-lucide="file-spreadsheet" class="w-4 h-4"></i>
+            Exportar Excel
+          </button>
+          <button onclick="openNewClientPrompt()" class="px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-white font-semibold rounded-xl text-xs transition flex items-center gap-2 shadow-lg shadow-cyan-500/20">
+            <i data-lucide="user-plus" class="w-4 h-4"></i>
+            Nuevo Cliente
+          </button>
+        </div>
+      </div>
+
+      <!-- Clients List -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="clients-cards-grid">
+        <!-- Dynamic client credit cards -->
+      </div>
+    </section>
+
+    <!-- ==================== TAB 4: REPORTES ==================== -->
+    <section id="view-sales" class="hidden space-y-6">
+      
+      <!-- Stats Cards Row -->
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl">
+          <span class="text-[11px] text-slate-400 font-medium">Ventas de Hoy</span>
+          <div id="stat-sales-today" class="text-xl font-bold text-slate-100 mt-1">S/ 0.00</div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl">
+          <span class="text-[11px] text-slate-400 font-medium">Ganancia de Hoy</span>
+          <div id="stat-profit-today" class="text-xl font-bold text-emerald-400 mt-1">S/ 0.00</div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl">
+          <span class="text-[11px] text-slate-400 font-medium">Ventas del Mes</span>
+          <div id="stat-sales-month" class="text-xl font-bold text-cyan-400 mt-1">S/ 0.00</div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl">
+          <span class="text-[11px] text-slate-400 font-medium">Ganancia del Mes</span>
+          <div id="stat-profit-month" class="text-xl font-bold text-teal-400 mt-1">S/ 0.00</div>
+        </div>
+      </div>
+
+      <!-- Sales History List Header -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl shadow-xl p-5">
+        <div class="flex justify-between items-center mb-4">
+          <h3 class="text-base font-bold text-slate-100">Historial de Ventas</h3>
+          <div class="flex items-center gap-2">
+            <button onclick="clearSalesHistory()" class="px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 font-semibold rounded-lg text-xs transition flex items-center gap-1">
+              <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Vaciar Historial
+            </button>
+            <button onclick="exportToExcel('sales')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-lg text-xs transition flex items-center gap-1">
+              <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5"></i> Excel
+            </button>
+          </div>
+        </div>
+        <div id="sales-history-list" class="space-y-3 max-h-[450px] overflow-y-auto pr-1">
+          <!-- Dynamic sales history -->
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ==================== MODAL 1: NUEVO/EDITAR PRODUCTO ==================== -->
+  <div id="product-modal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden overflow-y-auto">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl relative my-8">
+      <button onclick="closeProductModal()" class="absolute right-4 top-4 text-slate-400 hover:text-white">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+
+      <h3 id="modal-title" class="text-lg font-bold text-slate-100 mb-4">Agregar Producto</h3>
+
+      <form id="product-form" onsubmit="handleProductFormSubmit(event)" class="space-y-3">
+        <input type="hidden" id="prod-id" />
+
+        <!-- Image Upload & Camera Section -->
+        <div>
+          <label class="block text-xs font-semibold text-slate-300 mb-1">Foto del Producto</label>
+          <div class="flex items-center gap-3 bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+            <div id="prod-img-preview-box" class="w-14 h-14 bg-slate-900 rounded-lg border border-slate-800 flex items-center justify-center overflow-hidden flex-shrink-0">
+              <i data-lucide="image" class="w-6 h-6 text-slate-600" id="prod-img-placeholder"></i>
+              <img id="prod-img-preview" src="" class="w-full h-full object-cover hidden" />
+            </div>
+            <input type="hidden" id="prod-photo-data" />
+            <div class="flex flex-col gap-1.5 flex-1">
+              <div class="flex gap-1.5">
+                <label class="flex-1 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 text-center cursor-pointer transition">
+                  <i data-lucide="upload" class="w-3.5 h-3.5 inline mr-1"></i> Galería
+                  <input type="file" accept="image/*" onchange="handleImageFileUpload(event)" class="hidden" />
+                </label>
+                <button type="button" onclick="openPhotoCaptureModal()" class="flex-1 px-2.5 py-1.5 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 text-xs font-semibold rounded-lg border border-cyan-500/30 transition">
+                  <i data-lucide="camera" class="w-3.5 h-3.5 inline mr-1"></i> Cámara
+                </button>
+              </div>
+              <button type="button" onclick="removeProductPhoto()" id="btn-remove-photo" class="text-[10px] text-rose-400 hover:underline text-left hidden">Eliminar foto</button>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-300 mb-1">Código de Barras / QR</label>
+          <div class="flex gap-2">
+            <input type="text" id="prod-barcode" placeholder="Ej. 775012345678" class="flex-1 bg-slate-950 border border-slate-800 text-slate-100 text-sm rounded-xl px-3 py-2 outline-none focus:border-cyan-500" required />
+            <button type="button" onclick="openRegScannerModal()" class="px-3 py-2 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 rounded-xl text-xs font-semibold transition flex items-center gap-1.5">
+              <i data-lucide="camera" class="w-4 h-4"></i> Escanear
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-300 mb-1">Nombre del Producto</label>
+          <input type="text" id="prod-name" placeholder="Ej. Leche Gloria Azul 400g" class="w-full bg-slate-950 border border-slate-800 text-slate-100 text-sm rounded-xl px-3 py-2 outline-none focus:border-cyan-500" required />
+        </div>
+
+        <!-- Shelf & Level Location -->
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 mb-1">Estante (Letra / Nombre)</label>
+            <input type="text" id="prod-shelf" placeholder="Ej. Estante A" class="w-full bg-slate-950 border border-slate-800 text-slate-100 text-sm rounded-xl px-3 py-2 outline-none focus:border-cyan-500" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 mb-1">Nivel / Fila</label>
+            <input type="text" id="prod-level" placeholder="Ej. Nivel 2" class="w-full bg-slate-950 border border-slate-800 text-slate-100 text-sm rounded-xl px-3 py-2 outline-none focus:border-cyan-500" />
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-300 mb-1">Proveedor (Opcional)</label>
+          <input type="text" id="prod-supplier" placeholder="Ej. Alicorp / Gloria / Distribuidora X" class="w-full bg-slate-950 border border-slate-800 text-slate-100 text-sm rounded-xl px-3 py-2 outline-none focus:border-cyan-500" />
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 mb-1">Precio Costo (S/)</label>
+            <input type="number" step="0.01" id="prod-cost" placeholder="3.20" class="w-full bg-slate-950 border border-slate-800 text-slate-100 text-sm rounded-xl px-3 py-2 outline-none focus:border-cyan-500" required />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 mb-1">Precio Venta (S/)</label>
+            <input type="number" step="0.01" id="prod-price" placeholder="4.00" class="w-full bg-slate-950 border border-slate-800 text-slate-100 text-sm rounded-xl px-3 py-2 outline-none focus:border-cyan-500" required />
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-300 mb-1">Stock Inicial</label>
+          <input type="number" step="0.01" id="prod-stock" placeholder="24" class="w-full bg-slate-950 border border-slate-800 text-slate-100 text-sm rounded-xl px-3 py-2 outline-none focus:border-cyan-500" required />
+        </div>
+
+        <div class="flex gap-3 pt-2">
+          <button type="button" onclick="closeProductModal()" class="flex-1 py-2.5 border border-slate-800 text-slate-300 rounded-xl text-sm font-semibold hover:bg-slate-800 transition">Cancelar</button>
+          <button type="submit" class="flex-1 py-2.5 bg-cyan-500 hover:bg-cyan-400 text-white rounded-xl text-sm font-semibold transition shadow-lg shadow-cyan-500/20">Guardar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL 2: CÁMARA PARA REGISTRAR PRODUCTO ==================== -->
+  <div id="reg-scanner-modal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-sm w-full p-5 shadow-2xl relative text-center">
+      <button onclick="closeRegScannerModal()" class="absolute right-4 top-4 text-slate-400 hover:text-white">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+
+      <h3 class="text-base font-bold text-slate-100 mb-3 flex items-center justify-center gap-2">
+        <i data-lucide="camera" class="w-5 h-5 text-cyan-400"></i>
+        Escanear Producto
+      </h3>
+
+      <div class="relative bg-slate-950 border border-slate-800 rounded-xl overflow-hidden min-h-[220px] flex items-center justify-center mb-4">
+        <div id="reg-reader" class="w-full"></div>
+      </div>
+
+      <p class="text-xs text-slate-400 mb-4">Enfoca el código de barras o QR. Se rellenará automáticamente.</p>
+
+      <button onclick="closeRegScannerModal()" class="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl border border-slate-700">
+        Cancelar
+      </button>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL 3: CÁMARA PARA TOMAR FOTO DEL PRODUCTO ==================== -->
+  <div id="photo-capture-modal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-sm w-full p-5 shadow-2xl relative text-center">
+      <button onclick="closePhotoCaptureModal()" class="absolute right-4 top-4 text-slate-400 hover:text-white">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+
+      <h3 class="text-base font-bold text-slate-100 mb-3 flex items-center justify-center gap-2">
+        <i data-lucide="camera" class="w-5 h-5 text-cyan-400"></i>
+        Tomar Foto al Producto
+      </h3>
+
+      <div class="relative bg-slate-950 border border-slate-800 rounded-xl overflow-hidden min-h-[220px] flex items-center justify-center mb-4">
+        <video id="photo-video" class="w-full h-48 object-cover rounded-xl" autoplay playsinline></video>
+        <canvas id="photo-canvas" class="hidden"></canvas>
+      </div>
+
+      <div class="flex gap-2">
+        <button onclick="capturePhotoFromCamera()" class="flex-1 py-2.5 bg-cyan-500 hover:bg-cyan-400 text-white font-bold rounded-xl text-xs transition">
+          📸 Capturar Foto
+        </button>
+        <button onclick="closePhotoCaptureModal()" class="py-2.5 px-4 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold border border-slate-700">
+          Cancelar
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL 4: BOLETA / TICKET DE VENTA NORMAL Y FIADO ==================== -->
+  <div id="boleta-modal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl relative">
+      <button onclick="closeBoletaModal()" class="absolute right-4 top-4 text-slate-400 hover:text-white no-print">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+
+      <!-- Printable Boleta Area -->
+      <div id="printable-boleta" class="text-slate-200">
+        <div class="text-center border-b border-slate-700 pb-3 mb-3">
+          <h2 class="text-lg font-bold text-slate-100">BODEGA "MI TIENDA"</h2>
+          <p id="boleta-title-type" class="text-xs text-slate-400">Boleta de Venta Simplificada</p>
+          <p id="boleta-date" class="text-xs text-slate-400 mt-1">Fecha: --/--/----</p>
+          <p id="boleta-client-name" class="text-xs font-bold text-cyan-400 mt-0.5 hidden">Cliente: --</p>
+        </div>
+
+        <div id="boleta-items-list" class="space-y-1.5 text-xs mb-4 border-b border-slate-700 pb-3">
+          <!-- Dynamic receipt items -->
+        </div>
+
+        <div class="space-y-1.5 text-xs mb-4">
+          <div id="boleta-discount-row" class="flex justify-between text-emerald-400 hidden">
+            <span>Descuento:</span>
+            <span id="boleta-discount-val">-S/ 0.00</span>
+          </div>
+          
+          <div class="flex justify-between font-bold text-sm text-slate-100 pt-1 border-t border-slate-800">
+            <span>TOTAL DE LA COMPRA:</span>
+            <span id="boleta-total">S/ 0.00</span>
+          </div>
+
+          <!-- Specific Fields for Credit Sales -->
+          <div id="boleta-credit-breakdown" class="space-y-1 bg-slate-950 p-2.5 rounded-xl border border-slate-800 my-2 hidden">
+            <div class="flex justify-between text-emerald-400 font-semibold">
+              <span>Pagado hoy al contado:</span>
+              <span id="boleta-cash-part">S/ 0.00</span>
+            </div>
+            <div class="flex justify-between text-rose-400 font-semibold">
+              <span>Monto fiado a cuenta:</span>
+              <span id="boleta-credit-part">S/ 0.00</span>
+            </div>
+            <div class="flex justify-between text-cyan-400 font-bold border-t border-slate-800 pt-1 mt-1">
+              <span>Deuda Total Acumulada:</span>
+              <span id="boleta-total-debt">S/ 0.00</span>
+            </div>
+          </div>
+
+          <div class="flex justify-between text-slate-400">
+            <span>Método de Pago:</span>
+            <span id="boleta-pay-type">Efectivo</span>
+          </div>
+
+          <div id="boleta-cash-details" class="space-y-0.5">
+            <div class="flex justify-between text-slate-400">
+              <span>Monto Recibido:</span>
+              <span id="boleta-given">S/ 0.00</span>
+            </div>
+            <div class="flex justify-between text-slate-400">
+              <span>Vuelto:</span>
+              <span id="boleta-change">S/ 0.00</span>
+            </div>
+          </div>
+        </div>
+
+        <p class="text-center text-[10px] text-slate-500 border-t border-slate-800 pt-3">¡Gracias por su preferencia!</p>
+      </div>
+
+      <div class="flex flex-col sm:flex-row gap-2 mt-6 no-print">
+        <button onclick="shareBoletaWhatsApp()" class="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold transition flex items-center justify-center gap-1.5">
+          <i data-lucide="message-circle" class="w-4 h-4"></i> WhatsApp
+        </button>
+        <button onclick="window.print()" class="flex-1 py-2.5 bg-cyan-500 hover:bg-cyan-400 text-white rounded-xl text-xs font-semibold transition flex items-center justify-center gap-1.5">
+          <i data-lucide="printer" class="w-4 h-4"></i> Imprimir / PDF
+        </button>
+        <button onclick="closeBoletaModal()" class="py-2.5 px-4 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold border border-slate-700">
+          Cerrar
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL 5: BOLETA / COMPROBANTE DE ABONO (FIADOS) ==================== -->
+  <div id="abono-boleta-modal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl relative">
+      <button onclick="closeAbonoBoletaModal()" class="absolute right-4 top-4 text-slate-400 hover:text-white no-print">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+
+      <!-- Printable Abono Area -->
+      <div id="printable-abono-boleta" class="text-slate-200">
+        <div class="text-center border-b border-slate-700 pb-3 mb-3">
+          <h2 class="text-lg font-bold text-slate-100">BODEGA "MI TIENDA"</h2>
+          <p class="text-xs font-bold text-emerald-400 uppercase tracking-wider">Comprobante de Cancelación de Deuda</p>
+          <p id="abono-boleta-date" class="text-xs text-slate-400 mt-1">Fecha: --/--/----</p>
+          <p id="abono-boleta-client" class="text-xs font-bold text-slate-200 mt-1">Cliente: --</p>
+        </div>
+
+        <!-- Detail of items paid in this receipt if any -->
+        <div id="abono-items-paid-box" class="mb-3 space-y-1 text-xs border-b border-slate-800 pb-2 hidden">
+          <span class="text-[10px] text-slate-400 uppercase font-semibold">Productos Cancelados:</span>
+          <div id="abono-items-list" class="space-y-1 pl-1"></div>
+        </div>
+
+        <div class="space-y-2 text-xs mb-4 bg-slate-950 p-3 rounded-xl border border-slate-800">
+          <div class="flex justify-between text-slate-400">
+            <span>Deuda Anterior:</span>
+            <span id="abono-boleta-prev-debt" class="font-semibold text-slate-200">S/ 0.00</span>
+          </div>
+          <div class="flex justify-between text-emerald-400 font-bold text-sm border-t border-b border-slate-900 py-1.5">
+            <span>Monto Pagado Hoy:</span>
+            <span id="abono-boleta-amount">S/ 0.00</span>
+          </div>
+          <div class="flex justify-between text-slate-400">
+            <span>Método de Pago:</span>
+            <span id="abono-boleta-pay-type" class="font-semibold text-slate-200">Efectivo</span>
+          </div>
+          <div class="flex justify-between font-bold text-sm text-cyan-400 pt-1">
+            <span>Deuda Restante / Saldo:</span>
+            <span id="abono-boleta-rem-debt">S/ 0.00</span>
+          </div>
+        </div>
+
+        <p class="text-center text-[10px] text-slate-500 border-t border-slate-800 pt-3">¡Gracias por su pago puntual!</p>
+      </div>
+
+      <div class="flex flex-col sm:flex-row gap-2 mt-6 no-print">
+        <button onclick="shareAbonoWhatsApp()" class="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold transition flex items-center justify-center gap-1.5">
+          <i data-lucide="message-circle" class="w-4 h-4"></i> WhatsApp
+        </button>
+        <button onclick="window.print()" class="flex-1 py-2.5 bg-cyan-500 hover:bg-cyan-400 text-white rounded-xl text-xs font-semibold transition flex items-center justify-center gap-1.5">
+          <i data-lucide="printer" class="w-4 h-4"></i> Imprimir / PDF
+        </button>
+        <button onclick="closeAbonoBoletaModal()" class="py-2.5 px-4 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold border border-slate-700">
+          Cerrar
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- JAVASCRIPT LOGIC -->
+  <script>
+    // State Management (LocalStorage First)
+    let inventory = JSON.parse(localStorage.getItem('bodega_inventory')) || [
+      { id: '1', barcode: '775012345678', name: 'Inca Kola 1.5L', supplier: 'Arca Continental', shelf: 'A', level: '1', photo: '', cost: 4.50, price: 6.00, stock: 18 },
+      { id: '2', barcode: '775087654321', name: 'Arroz Faraón 1kg', supplier: 'Alicorp', shelf: 'B', level: '2', photo: '', cost: 3.80, price: 4.80, stock: 30 },
+      { id: '3', barcode: '775011122233', name: 'Leche Gloria Azul 400g', supplier: 'Gloria', shelf: 'A', level: '3', photo: '', cost: 3.50, price: 4.20, stock: 24 }
+    ];
+
+    let salesHistory = JSON.parse(localStorage.getItem('bodega_sales')) || [];
+    let clients = JSON.parse(localStorage.getItem('bodega_clients')) || [
+      { id: 'c1', name: 'Vecina María', phone: '987654321', debt: 0, history: [] }
+    ];
+
+    let cart = [];
+    let paymentMethod = 'cash';
+    let mainScanner = null;
+    let regScanner = null;
+    let photoStream = null;
+    let isCameraRunning = false;
+    let isScanCoolingDown = false; // Cooldown flag for barcode reader
+    let activeSaleForBoleta = null;
+    let activeAbonoForBoleta = null;
+    let selectedCreditItems = {}; // Multi-selection map by clientId: [itemKey1, itemKey2]
+
+    // Web Audio Synthesizer Beep for Scans
+    function playBeep() {
+      try {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(1200, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.12);
+      } catch (e) {
+        console.log('Audio error:', e);
+      }
+    }
+
+    // Dismiss HTTPS Alert Banner
+    function dismissHttpsAlert() {
+      document.getElementById('https-alert').classList.add('hidden');
+    }
+
+    // Save State
+    function saveData() {
+      localStorage.setItem('bodega_inventory', JSON.stringify(inventory));
+      localStorage.setItem('bodega_sales', JSON.stringify(salesHistory));
+      localStorage.setItem('bodega_clients', JSON.stringify(clients));
+    }
+
+    // Image Upload & Photo Capture Handling
+    function handleImageFileUpload(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function(event) {
+        setProductPhotoData(event.target.result);
+      };
+      reader.readAsDataURL(file);
+    }
+
+    async function openPhotoCaptureModal() {
+      document.getElementById('photo-capture-modal').classList.remove('hidden');
+      const video = document.getElementById('photo-video');
+      try {
+        photoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        video.srcObject = photoStream;
+      } catch (err) {
+        alert('No se pudo abrir la cámara para tomar la foto: ' + err);
+        closePhotoCaptureModal();
+      }
+    }
+
+    function capturePhotoFromCamera() {
+      const video = document.getElementById('photo-video');
+      const canvas = document.getElementById('photo-canvas');
+      canvas.width = 300;
+      canvas.height = 300;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, 300, 300);
+      
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+      setProductPhotoData(dataUrl);
+      closePhotoCaptureModal();
+    }
+
+    function closePhotoCaptureModal() {
+      if (photoStream) {
+        photoStream.getTracks().forEach(track => track.stop());
+        photoStream = null;
+      }
+      document.getElementById('photo-capture-modal').classList.add('hidden');
+    }
+
+    function setProductPhotoData(base64Img) {
+      document.getElementById('prod-photo-data').value = base64Img;
+      document.getElementById('prod-img-preview').src = base64Img;
+      document.getElementById('prod-img-preview').classList.remove('hidden');
+      document.getElementById('prod-img-placeholder').classList.add('hidden');
+      document.getElementById('btn-remove-photo').classList.remove('hidden');
+    }
+
+    function removeProductPhoto() {
+      document.getElementById('prod-photo-data').value = '';
+      document.getElementById('prod-img-preview').src = '';
+      document.getElementById('prod-img-preview').classList.add('hidden');
+      document.getElementById('prod-img-placeholder').classList.remove('hidden');
+      document.getElementById('btn-remove-photo').classList.add('hidden');
+    }
+
+    // Export & Smart Merge Import Backup JSON Logic
+    function exportJSONBackup() {
+      const backupData = {
+        inventory: inventory,
+        salesHistory: salesHistory,
+        clients: clients,
+        exportDate: new Date().toISOString()
+      };
+
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backupData, null, 2));
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute("href", dataStr);
+      downloadAnchor.setAttribute("download", `BodegaPOS_Respaldo_${new Date().toISOString().slice(0,10)}.json`);
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+    }
+
+    function importJSONBackup(event) {
+      const fileReader = new FileReader();
+      fileReader.onload = function(e) {
+        try {
+          const parsed = JSON.parse(e.target.result);
+          if (parsed.inventory && parsed.salesHistory && parsed.clients) {
+            
+            // 1. SMART MERGE INVENTORY (by unique ID first, then barcode)
+            parsed.inventory.forEach(impProd => {
+              const existingIdx = inventory.findIndex(p => p.id === impProd.id || p.barcode === impProd.barcode);
+              if (existingIdx >= 0) {
+                inventory[existingIdx] = { ...inventory[existingIdx], ...impProd };
+              } else {
+                inventory.push(impProd);
+              }
+            });
+
+            // 2. SMART MERGE SALES HISTORY (by transaction ID)
+            parsed.salesHistory.forEach(impSale => {
+              const exists = salesHistory.some(s => s.id === impSale.id);
+              if (!exists) {
+                salesHistory.push(impSale);
+              }
+            });
+            salesHistory.sort((a, b) => new Date(b.timestamp || b.date) - new Date(a.timestamp || a.date));
+
+            // 3. SMART MERGE CLIENTS (by client name / ID)
+            parsed.clients.forEach(impClient => {
+              const existingClient = clients.find(c => c.id === impClient.id || c.name.toLowerCase() === impClient.name.toLowerCase());
+              if (existingClient) {
+                impClient.history.forEach(impHist => {
+                  const histExists = existingClient.history.some(h => (h.id && h.id === impHist.id) || (h.date === impHist.date && h.amount === impHist.amount));
+                  if (!histExists) existingClient.history.unshift(impHist);
+                });
+                let calcDebt = 0;
+                existingClient.history.forEach(h => {
+                  if (h.type === 'FIADO' && !h.paid) calcDebt += h.amount;
+                  if (h.type === 'ABONO') calcDebt -= h.amount;
+                });
+                existingClient.debt = Math.max(0, calcDebt);
+              } else {
+                clients.push(impClient);
+              }
+            });
+
+            saveData();
+            renderProductCatalog();
+            renderInventoryTable();
+            renderClientsGrid();
+            renderSalesHistory();
+            renderClientSelect();
+
+            alert('¡Fusión inteligente realizada con éxito! Se han combinado los productos, fotos, estantes, ventas y fiados.');
+          } else {
+            alert('El archivo JSON no tiene el formato correcto de BodegaPOS.');
+          }
+        } catch (err) {
+          alert('Error al leer el archivo JSON.');
+        }
+      };
+      if (event.target.files[0]) {
+        fileReader.readAsText(event.target.files[0]);
+      }
+    }
+
+    // Initialize App
+    window.addEventListener('DOMContentLoaded', () => {
+      lucide.createIcons();
+      renderProductCatalog();
+      renderInventoryTable();
+      renderClientsGrid();
+      renderSalesHistory();
+      renderClientSelect();
+      checkHTTPS();
+      initCameraList();
+    });
+
+    // Navigation Tabs
+    function switchTab(tab) {
+      document.getElementById('view-pos').classList.add('hidden');
+      document.getElementById('view-inventory').classList.add('hidden');
+      document.getElementById('view-credits').classList.add('hidden');
+      document.getElementById('view-sales').classList.add('hidden');
+
+      const tabs = ['pos', 'inventory', 'credits', 'sales'];
+      tabs.forEach(t => {
+        const btn = document.getElementById(`tab-${t}`);
+        if (btn) {
+          btn.className = 'flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg text-sm font-medium transition-all text-slate-400 hover:text-slate-200 hover:bg-slate-700/50';
+        }
+      });
+
+      document.getElementById(`view-${tab}`).classList.remove('hidden');
+      document.getElementById(`tab-${tab}`).className = 'flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg text-sm font-medium transition-all bg-cyan-500 text-white shadow-md shadow-cyan-500/20';
+
+      if (tab === 'inventory') renderInventoryTable();
+      if (tab === 'credits') renderClientsGrid();
+      if (tab === 'sales') renderSalesHistory();
+    }
+
+    function checkHTTPS() {
+      if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+        document.getElementById('https-alert').classList.remove('hidden');
+      }
+    }
+
+    // Camera Selector & Main Camera Logic with 2-second Cooldown
+    async function initCameraList() {
+      try {
+        const devices = await Html5Qrcode.getCameras();
+        const select = document.getElementById('camera-select');
+        select.innerHTML = '';
+        if (devices && devices.length) {
+          devices.forEach((dev, idx) => {
+            const opt = document.createElement('option');
+            opt.value = dev.id;
+            opt.innerText = dev.label || `Cámara ${idx + 1}`;
+            select.appendChild(opt);
+          });
+        } else {
+          select.innerHTML = '<option value="">Sin cámara</option>';
+        }
+      } catch (e) {
+        document.getElementById('camera-select').innerHTML = '<option value="">Permiso requerido</option>';
+      }
+    }
+
+    async function toggleCamera() {
+      const btn = document.getElementById('btn-toggle-cam');
+      if (isCameraRunning) {
+        if (mainScanner) {
+          await mainScanner.stop();
+          mainScanner = null;
+        }
+        isCameraRunning = false;
+        btn.innerText = 'Iniciar Cámara';
+        document.getElementById('scanner-laser').classList.add('hidden');
+        document.getElementById('cam-placeholder').classList.remove('hidden');
+      } else {
+        const cameraId = document.getElementById('camera-select').value;
+        mainScanner = new Html5Qrcode('reader');
+        const config = { fps: 10, qrbox: { width: 250, height: 150 } };
+
+        try {
+          document.getElementById('cam-placeholder').classList.add('hidden');
+          document.getElementById('scanner-laser').classList.remove('hidden');
+          await mainScanner.start(
+            cameraId ? { deviceId: cameraId } : { facingMode: 'environment' },
+            config,
+            (decodedText) => {
+              if (isScanCoolingDown) return; // Prevent fast duplicate reads
+
+              isScanCoolingDown = true;
+              playBeep();
+              addToCartByBarcode(decodedText);
+
+              // 2-second pause before allowing next camera scan
+              setTimeout(() => {
+                isScanCoolingDown = false;
+              }, 2000);
+            }
+          );
+          isCameraRunning = true;
+          btn.innerText = 'Detener Cámara';
+        } catch (err) {
+          alert('Error al acceder a la cámara: ' + err);
+          document.getElementById('scanner-laser').classList.add('hidden');
+          document.getElementById('cam-placeholder').classList.remove('hidden');
+        }
+      }
+    }
+
+    // Modal Registration Camera Logic
+    async function openRegScannerModal() {
+      document.getElementById('reg-scanner-modal').classList.remove('hidden');
+      regScanner = new Html5Qrcode('reg-reader');
+      const config = { fps: 10, qrbox: { width: 220, height: 140 } };
+
+      try {
+        await regScanner.start(
+          { facingMode: 'environment' },
+          config,
+          (decodedText) => {
+            playBeep();
+            document.getElementById('prod-barcode').value = decodedText;
+            closeRegScannerModal();
+          }
+        );
+      } catch (err) {
+        alert('No se pudo acceder a la cámara: ' + err);
+        closeRegScannerModal();
+      }
+    }
+
+    async function closeRegScannerModal() {
+      if (regScanner) {
+        try {
+          await regScanner.stop();
+        } catch (e) {}
+        regScanner = null;
+      }
+      document.getElementById('reg-scanner-modal').classList.add('hidden');
+    }
+
+    // Monthly Product Velocity Calculator
+    function getMonthlySalesByProduct(productId) {
+      const now = new Date();
+      const currentMonth = now.getMonth();
+      const currentYear = now.getFullYear();
+
+      let totalQty = 0;
+      salesHistory.forEach(sale => {
+        const saleDate = new Date(sale.timestamp || sale.date);
+        if (saleDate.getMonth() === currentMonth && saleDate.getFullYear() === currentYear) {
+          sale.items.forEach(item => {
+            if (item.id === productId) {
+              totalQty += item.qty;
+            }
+          });
+        }
+      });
+      return totalQty;
+    }
+
+    // Catalog & Manual Scans
+    function renderProductCatalog() {
+      const grid = document.getElementById('catalog-grid');
+      const search = document.getElementById('search-input').value.toLowerCase();
+      grid.innerHTML = '';
+
+      const filtered = inventory.filter(p => 
+        p.name.toLowerCase().includes(search) || 
+        p.barcode.includes(search) ||
+        (p.supplier && p.supplier.toLowerCase().includes(search)) ||
+        (p.shelf && p.shelf.toLowerCase().includes(search))
+      );
+
+      filtered.forEach(p => {
+        const soldThisMonth = getMonthlySalesByProduct(p.id);
+        const card = document.createElement('div');
+        card.className = 'bg-slate-950 border border-slate-800 hover:border-cyan-500/50 p-3 rounded-xl cursor-pointer transition flex flex-col justify-between group';
+        card.onclick = () => addToCart(p);
+        
+        const photoHtml = p.photo 
+          ? `<img src="${p.photo}" class="w-full h-24 object-cover rounded-lg mb-2 border border-slate-800" />` 
+          : '';
+
+        card.innerHTML = `
+          <div>
+            ${photoHtml}
+            <div class="text-xs font-bold text-slate-200 group-hover:text-cyan-400 transition line-clamp-1">${p.name}</div>
+            <div class="text-[10px] text-slate-500 mt-0.5 flex justify-between">
+              <span>Cód: ${p.barcode}</span>
+              ${p.shelf ? `<span class="text-amber-400 font-semibold">📍 ${p.shelf}${p.level ? `-${p.level}` : ''}</span>` : ''}
+            </div>
+          </div>
+          <div class="flex justify-between items-center mt-3 pt-2 border-t border-slate-900">
+            <div>
+              <span class="text-xs font-bold text-cyan-400">S/ ${p.price.toFixed(2)}</span>
+              <div class="text-[9px] text-slate-400">Vendidos/mes: ${soldThisMonth}</div>
+            </div>
+            <span class="text-[10px] px-1.5 py-0.5 rounded ${p.stock > 5 ? 'bg-slate-800 text-slate-400' : 'bg-rose-500/20 text-rose-400'}">Stock: ${p.stock}</span>
+          </div>
+        `;
+        grid.appendChild(card);
+      });
+    }
+
+    function handleManualBarcodeKeyPress(e) {
+      if (e.key === 'Enter') {
+        const code = e.target.value.trim();
+        if (code) {
+          addToCartByBarcode(code);
+          e.target.value = '';
+        }
+      }
+    }
+
+    function addToCartByBarcode(barcode) {
+      const prod = inventory.find(p => p.barcode === barcode);
+      if (prod) {
+        addToCart(prod);
+      } else {
+        alert('Producto no encontrado con el código: ' + barcode);
+      }
+    }
+
+    function addToCart(prod) {
+      const existing = cart.find(item => item.id === prod.id);
+      if (existing) {
+        if (existing.qty < prod.stock) {
+          existing.qty++;
+          playBeep();
+        } else {
+          alert('Stock máximo alcanzado para este producto');
+        }
+      } else {
+        if (prod.stock > 0) {
+          cart.push({ ...prod, qty: 1, splitMode: 'fiado' });
+          playBeep();
+        } else {
+          alert('Producto sin stock disponible');
+        }
+      }
+      renderCart();
+    }
+
+    function updateCartQty(id, delta) {
+      const item = cart.find(i => i.id === id);
+      if (item) {
+        item.qty += delta;
+        if (item.qty <= 0) {
+          cart = cart.filter(i => i.id !== id);
+        }
+      }
+      renderCart();
+    }
+
+    function setCartQtyPrompt(id) {
+      const item = cart.find(i => i.id === id);
+      if (!item) return;
+
+      const inputVal = prompt(`Ingresa la cantidad o kilos para "${item.name}":`, item.qty);
+      if (inputVal === null) return;
+
+      const newQty = parseFloat(inputVal);
+      if (isNaN(newQty) || newQty <= 0) {
+        cart = cart.filter(i => i.id !== id);
+      } else {
+        if (newQty <= item.stock) {
+          item.qty = newQty;
+        } else {
+          alert(`Stock insuficiente. Solo quedan ${item.stock} unidades/kilos.`);
+          item.qty = item.stock;
+        }
+      }
+      renderCart();
+    }
+
+    function toggleItemSplitMode(id) {
+      const item = cart.find(i => i.id === id);
+      if (item) {
+        item.splitMode = item.splitMode === 'contado' ? 'fiado' : 'contado';
+        renderCart();
+      }
+    }
+
+    function clearCart() {
+      cart = [];
+      document.getElementById('discount-val').value = '';
+      document.getElementById('cash-client-name').value = '';
+      document.getElementById('credit-cash-paid').value = '';
+      renderCart();
+    }
+
+    function calculateDiscount(subtotal) {
+      const val = parseFloat(document.getElementById('discount-val').value) || 0;
+      const type = document.getElementById('discount-type').value;
+
+      if (val <= 0) return 0;
+      if (type === 'percent') {
+        return Math.min(subtotal, (subtotal * val) / 100);
+      }
+      return Math.min(subtotal, val);
+    }
+
+    function renderCart() {
+      const container = document.getElementById('cart-items');
+      container.innerHTML = '';
+      let subtotal = 0;
+
+      cart.forEach(item => {
+        const itemTotal = item.price * item.qty;
+        subtotal += itemTotal;
+
+        const isCreditMode = paymentMethod === 'credit';
+        const isContado = item.splitMode === 'contado';
+
+        const row = document.createElement('div');
+        row.className = 'flex items-center justify-between bg-slate-950 p-2.5 rounded-xl border border-slate-800 text-xs';
+        row.innerHTML = `
+          <div class="flex-1 pr-2">
+            <div class="flex items-center gap-1.5 flex-wrap">
+              <span class="font-semibold text-slate-200">${item.name}</span>
+              ${isCreditMode ? `
+                <button onclick="toggleItemSplitMode('${item.id}')" title="Clic para cambiar entre Contado o Fiado" class="px-1.5 py-0.5 rounded text-[10px] font-bold transition ${isContado ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'}">
+                  ${isContado ? '💵 Contado' : '📝 Fiado'}
+                </button>
+              ` : ''}
+            </div>
+            <div class="text-slate-500">S/ ${item.price.toFixed(2)} c/u</div>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <button onclick="updateCartQty('${item.id}', -1)" class="w-6 h-6 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg flex items-center justify-center font-bold">-</button>
+            <button onclick="setCartQtyPrompt('${item.id}')" title="Clic para ingresar kilos o fracción" class="px-2 py-0.5 bg-slate-900 border border-slate-700 hover:border-cyan-500 text-cyan-400 font-bold rounded-lg text-xs flex items-center gap-1">
+              <span>${item.qty}</span>
+              <i data-lucide="edit-2" class="w-2.5 h-2.5 text-slate-400"></i>
+            </button>
+            <button onclick="updateCartQty('${item.id}', 1)" class="w-6 h-6 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg flex items-center justify-center font-bold">+</button>
+            <span class="font-bold text-cyan-400 w-14 text-right">S/ ${itemTotal.toFixed(2)}</span>
+          </div>
+        `;
+        container.appendChild(row);
+      });
+
+      const discount = calculateDiscount(subtotal);
+      const total = subtotal - discount;
+
+      document.getElementById('cart-subtotal').innerText = `S/ ${subtotal.toFixed(2)}`;
+      
+      const discRow = document.getElementById('row-discount');
+      if (discount > 0) {
+        discRow.classList.remove('hidden');
+        document.getElementById('cart-discount-text').innerText = `-S/ ${discount.toFixed(2)}`;
+      } else {
+        discRow.classList.add('hidden');
+      }
+
+      document.getElementById('cart-total').innerText = `S/ ${total.toFixed(2)}`;
+      calculateChange();
+      lucide.createIcons();
+    }
+
+    // Payment Methods & Change Calc
+    function setPaymentMethod(type) {
+      paymentMethod = type;
+      const cashBtn = document.getElementById('pay-type-cash');
+      const yapeBtn = document.getElementById('pay-type-yape');
+      const creditBtn = document.getElementById('pay-type-credit');
+      const cashBox = document.getElementById('cash-calculator-box');
+      const creditBox = document.getElementById('credit-client-box');
+      const cashClientNameBox = document.getElementById('cash-client-name-box');
+
+      cashBtn.className = 'py-2 px-2 border rounded-xl font-medium text-xs flex items-center justify-center gap-1.5 border-slate-800 bg-slate-950 text-slate-400';
+      yapeBtn.className = 'py-2 px-2 border rounded-xl font-medium text-xs flex items-center justify-center gap-1.5 border-slate-800 bg-slate-950 text-slate-400';
+      creditBtn.className = 'py-2 px-2 border rounded-xl font-medium text-xs flex items-center justify-center gap-1.5 border-slate-800 bg-slate-950 text-slate-400';
+
+      cashBox.classList.add('hidden');
+      creditBox.classList.add('hidden');
+      cashClientNameBox.classList.remove('hidden');
+
+      if (type === 'cash') {
+        cashBtn.className = 'py-2 px-2 border rounded-xl font-medium text-xs flex items-center justify-center gap-1.5 border-cyan-500 bg-cyan-500/10 text-cyan-400';
+        cashBox.classList.remove('hidden');
+      } else if (type === 'yape') {
+        yapeBtn.className = 'py-2 px-2 border rounded-xl font-medium text-xs flex items-center justify-center gap-1.5 border-cyan-500 bg-cyan-500/10 text-cyan-400';
+      } else if (type === 'credit') {
+        creditBtn.className = 'py-2 px-2 border rounded-xl font-medium text-xs flex items-center justify-center gap-1.5 border-cyan-500 bg-cyan-500/10 text-cyan-400';
+        creditBox.classList.remove('hidden');
+        cashClientNameBox.classList.add('hidden');
+      }
+
+      renderCart();
+    }
+
+    function quickCash(amount) {
+      document.getElementById('cash-given').value = amount;
+      calculateChange();
+    }
+
+    function calculateChange() {
+      const subtotal = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
+      const discount = calculateDiscount(subtotal);
+      const total = subtotal - discount;
+
+      const given = parseFloat(document.getElementById('cash-given').value) || 0;
+      const change = given - total;
+      document.getElementById('cash-change').innerText = `S/ ${change > 0 ? change.toFixed(2) : '0.00'}`;
+    }
+
+    // Client Credit Selector Options
+    function renderClientSelect() {
+      const select = document.getElementById('credit-client-select');
+      select.innerHTML = '<option value="">Seleccionar Cliente...</option>';
+      clients.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c.id;
+        opt.innerText = `${c.name} (Debe: S/ ${c.debt.toFixed(2)})`;
+        select.appendChild(opt);
+      });
+    }
+
+    function openNewClientPrompt() {
+      const name = prompt('Nombre del nuevo cliente:');
+      if (!name) return;
+      const phone = prompt('Teléfono o WhatsApp (opcional):') || '';
+      
+      const newClient = {
+        id: Date.now().toString(),
+        name,
+        phone,
+        debt: 0,
+        history: []
+      };
+
+      clients.push(newClient);
+      saveData();
+      renderClientSelect();
+      renderClientsGrid();
+    }
+
+    // Checkout & Process Sale
+    function processCheckout() {
+      if (cart.length === 0) {
+        alert('El carrito está vacío');
+        return;
+      }
+
+      const subtotal = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
+      const totalCost = cart.reduce((sum, item) => sum + (item.cost * item.qty), 0);
+      const discount = calculateDiscount(subtotal);
+      const totalSale = subtotal - discount;
+
+      let clientId = null;
+      let clientName = null;
+      let cashPart = 0;
+      let creditPart = 0;
+      let given = 0;
+      let change = 0;
+      let profitForSale = 0;
+
+      if (paymentMethod === 'credit') {
+        clientId = document.getElementById('credit-client-select').value;
+        if (!clientId) {
+          alert('Por favor selecciona un cliente para fiarle.');
+          return;
+        }
+        const client = clients.find(c => c.id === clientId);
+        clientName = client.name;
+
+        // Check items marked as Contado vs Fiado
+        const itemsMarkedContado = cart.filter(i => i.splitMode === 'contado');
+        const itemsMarkedFiado = cart.filter(i => i.splitMode !== 'contado');
+
+        const cashByToggle = itemsMarkedContado.reduce((sum, item) => sum + (item.price * item.qty), 0);
+        const cashCostByToggle = itemsMarkedContado.reduce((sum, item) => sum + (item.cost * item.qty), 0);
+        const manualCashPaid = parseFloat(document.getElementById('credit-cash-paid').value) || 0;
+
+        cashPart = Math.max(cashByToggle, manualCashPaid);
+        if (cashPart > totalSale) cashPart = totalSale;
+
+        creditPart = totalSale - cashPart;
+        client.debt += creditPart;
+
+        // ACCURATE PROFIT LOGIC FOR CREDIT:
+        // Profit is ONLY calculated on the portion actually paid in CASH today.
+        if (cashPart > 0) {
+          if (cashByToggle > 0) {
+            profitForSale = Math.max(0, cashByToggle - cashCostByToggle);
+          } else {
+            // Proportional profit for manual partial cash entry
+            const overallMargin = totalSale > 0 ? (totalSale - totalCost) / totalSale : 0;
+            profitForSale = Math.max(0, cashPart * overallMargin);
+          }
+        } else {
+          profitForSale = 0; // Strictly 0 profit on 100% fiado
+        }
+
+        const creditItemsToLog = itemsMarkedFiado.length > 0 ? itemsMarkedFiado : cart;
+
+        client.history.unshift({
+          id: Date.now().toString(),
+          date: new Date().toLocaleString('es-PE'),
+          type: 'FIADO',
+          amount: creditPart,
+          paid: false,
+          items: creditItemsToLog.map(i => ({
+            id: Date.now().toString() + Math.random().toString().slice(2, 6),
+            name: i.name,
+            qty: i.qty,
+            price: i.price,
+            cost: i.cost,
+            paid: false
+          }))
+        });
+      } else {
+        const manualName = document.getElementById('cash-client-name').value.trim();
+        if (manualName) clientName = manualName;
+
+        cashPart = totalSale;
+        given = parseFloat(document.getElementById('cash-given').value) || totalSale;
+        if (paymentMethod === 'cash' && given < totalSale) {
+          alert('El monto ingresado es menor al total de la venta');
+          return;
+        }
+        change = paymentMethod === 'cash' ? Math.max(0, given - totalSale) : 0;
+        profitForSale = totalSale - totalCost; // Normal cash profit
+      }
+
+      // Deduct inventory stock
+      cart.forEach(cartItem => {
+        const prod = inventory.find(p => p.id === cartItem.id);
+        if (prod) prod.stock -= cartItem.qty;
+      });
+
+      // Record in Sales History for daily cash register
+      const saleRecord = {
+        id: Date.now().toString(),
+        timestamp: new Date().toISOString(),
+        date: new Date().toLocaleString('es-PE'),
+        items: [...cart],
+        subtotal: subtotal,
+        discount: discount,
+        total: totalSale,
+        profit: profitForSale,
+        payType: paymentMethod,
+        clientId: clientId,
+        clientName: clientName,
+        cashPart: cashPart,
+        creditPart: creditPart,
+        given: paymentMethod === 'cash' ? given : cashPart,
+        change: change
+      };
+
+      salesHistory.unshift(saleRecord);
+      saveData();
+
+      // Show Boleta
+      openBoletaModal(saleRecord);
+
+      // Reset
+      cart = [];
+      document.getElementById('cash-given').value = '';
+      document.getElementById('discount-val').value = '';
+      document.getElementById('cash-client-name').value = '';
+      document.getElementById('credit-cash-paid').value = '';
+      renderCart();
+      renderProductCatalog();
+      renderClientsGrid();
+      renderClientSelect();
+    }
+
+    function openBoletaModal(sale) {
+      activeSaleForBoleta = sale;
+      document.getElementById('boleta-date').innerText = `Fecha: ${sale.date}`;
+      document.getElementById('boleta-total').innerText = `S/ ${sale.total.toFixed(2)}`;
+      
+      const clientNameElem = document.getElementById('boleta-client-name');
+      if (sale.clientName) {
+        clientNameElem.innerText = `Cliente: ${sale.clientName}`;
+        clientNameElem.classList.remove('hidden');
+      } else {
+        clientNameElem.classList.add('hidden');
+      }
+
+      const titleTypeElem = document.getElementById('boleta-title-type');
+      const creditBreakdown = document.getElementById('boleta-credit-breakdown');
+      const cashDetails = document.getElementById('boleta-cash-details');
+
+      if (sale.payType === 'credit') {
+        titleTypeElem.innerText = 'Boleta de Venta a Crédito / Fiado';
+        document.getElementById('boleta-pay-type').innerText = `Fiado (${sale.clientName})`;
+        
+        creditBreakdown.classList.remove('hidden');
+        document.getElementById('boleta-cash-part').innerText = `S/ ${sale.cashPart.toFixed(2)}`;
+        document.getElementById('boleta-credit-part').innerText = `S/ ${sale.creditPart.toFixed(2)}`;
+
+        const client = clients.find(c => c.id === sale.clientId);
+        document.getElementById('boleta-total-debt').innerText = `S/ ${client ? client.debt.toFixed(2) : sale.creditPart.toFixed(2)}`;
+        
+        cashDetails.classList.add('hidden');
+      } else {
+        titleTypeElem.innerText = 'Boleta de Venta Simplificada';
+        document.getElementById('boleta-pay-type').innerText = sale.payType === 'yape' ? 'Yape / Plin' : 'Efectivo';
+        creditBreakdown.classList.add('hidden');
+
+        if (sale.payType === 'cash') {
+          cashDetails.classList.remove('hidden');
+          document.getElementById('boleta-given').innerText = `S/ ${sale.given.toFixed(2)}`;
+          document.getElementById('boleta-change').innerText = `S/ ${sale.change.toFixed(2)}`;
+        } else {
+          cashDetails.classList.add('hidden');
+        }
+      }
+
+      const discRow = document.getElementById('boleta-discount-row');
+      if (sale.discount > 0) {
+        discRow.classList.remove('hidden');
+        document.getElementById('boleta-discount-val').innerText = `-S/ ${sale.discount.toFixed(2)}`;
+      } else {
+        discRow.classList.add('hidden');
+      }
+
+      const itemsContainer = document.getElementById('boleta-items-list');
+      itemsContainer.innerHTML = '';
+      sale.items.forEach(i => {
+        const row = document.createElement('div');
+        row.className = 'flex justify-between';
+        row.innerHTML = `
+          <span>${i.qty}x ${i.name} ${sale.payType === 'credit' && i.splitMode === 'contado' ? '<strong class="text-emerald-400 font-semibold">(Contado)</strong>' : ''}</span>
+          <span>S/ ${(i.price * i.qty).toFixed(2)}</span>
+        `;
+        itemsContainer.appendChild(row);
+      });
+
+      document.getElementById('boleta-modal').classList.remove('hidden');
+      lucide.createIcons();
+    }
+
+    function shareBoletaWhatsApp() {
+      if (!activeSaleForBoleta) return;
+      const s = activeSaleForBoleta;
+
+      let msg = `🧾 *BODEGA "MI TIENDA"*\n`;
+      msg += `*${s.payType === 'credit' ? 'Boleta de Venta a Crédito / Fiado' : 'Boleta de Venta'}*\n`;
+      msg += `📅 Fecha: ${s.date}\n`;
+      if (s.clientName) msg += `👤 Cliente: ${s.clientName}\n`;
+      msg += `--------------------------------\n`;
+      s.items.forEach(i => {
+        msg += `• ${i.qty}x ${i.name} = S/ ${(i.price * i.qty).toFixed(2)}\n`;
+      });
+      msg += `--------------------------------\n`;
+      if (s.discount > 0) msg += `🔖 Descuento: -S/ ${s.discount.toFixed(2)}\n`;
+      msg += `💰 *TOTAL COMPRA: S/ ${s.total.toFixed(2)}*\n`;
+      
+      if (s.payType === 'credit') {
+        msg += `💵 Pagado hoy al contado: S/ ${s.cashPart.toFixed(2)}\n`;
+        msg += `📝 Monto cargado a cuenta: S/ ${s.creditPart.toFixed(2)}\n`;
+        const client = clients.find(c => c.id === s.clientId);
+        msg += `📌 *DEUDA TOTAL ACUMULADA: S/ ${client ? client.debt.toFixed(2) : s.creditPart.toFixed(2)}*\n`;
+      } else {
+        msg += `💳 Pago: ${s.payType.toUpperCase()}\n`;
+        if (s.payType === 'cash') {
+          msg += `💵 Recibido: S/ ${s.given.toFixed(2)}\n`;
+          msg += `🪙 Vuelto: S/ ${s.change.toFixed(2)}\n`;
+        }
+      }
+      msg += `\n¡Gracias por su preferencia! 🙌`;
+
+      const encodedMsg = encodeURIComponent(msg);
+      window.open(`https://wa.me/?text=${encodedMsg}`, '_blank');
+    }
+
+    function viewPastBoleta(saleId) {
+      const sale = salesHistory.find(s => s.id === saleId);
+      if (sale) {
+        openBoletaModal(sale);
+      }
+    }
+
+    function closeBoletaModal() {
+      document.getElementById('boleta-modal').classList.add('hidden');
+      activeSaleForBoleta = null;
+    }
+
+    // Inventory Management Modal
+    function renderInventoryTable() {
+      const tbody = document.getElementById('inventory-table-body');
+      tbody.innerHTML = '';
+
+      inventory.forEach(p => {
+        const margin = (((p.price - p.cost) / p.price) * 100).toFixed(0);
+        const soldThisMonth = getMonthlySalesByProduct(p.id);
+
+        const photoTd = p.photo 
+          ? `<img src="${p.photo}" class="w-9 h-9 object-cover rounded-lg border border-slate-800" />`
+          : `<div class="w-9 h-9 bg-slate-950 rounded-lg border border-slate-800 flex items-center justify-center text-[10px] text-slate-600">Sin foto</div>`;
+
+        const locationStr = (p.shelf || p.level) ? `📍 ${p.shelf || ''}${p.level ? `-${p.level}` : ''}` : '-';
+
+        const tr = document.createElement('tr');
+        tr.className = 'hover:bg-slate-950/40 transition';
+        tr.innerHTML = `
+          <td class="px-4 py-3">${photoTd}</td>
+          <td class="px-4 py-3 font-mono text-xs text-slate-400">${p.barcode}</td>
+          <td class="px-4 py-3 font-semibold text-slate-200">${p.name}</td>
+          <td class="px-4 py-3 text-xs text-amber-400/90 font-medium">${locationStr}</td>
+          <td class="px-4 py-3 text-xs text-slate-400">${p.supplier || '-'}</td>
+          <td class="px-4 py-3">S/ ${p.cost.toFixed(2)}</td>
+          <td class="px-4 py-3 font-bold text-cyan-400">S/ ${p.price.toFixed(2)}</td>
+          <td class="px-4 py-3"><span class="bg-emerald-500/10 text-emerald-400 text-xs font-semibold px-2 py-0.5 rounded border border-emerald-500/20">${margin}%</span></td>
+          <td class="px-4 py-3"><span class="${p.stock < 10 ? 'text-rose-400 font-bold' : ''}">${p.stock} un.</span></td>
+          <td class="px-4 py-3 font-semibold text-cyan-400">${soldThisMonth} un.</td>
+          <td class="px-4 py-3 text-right">
+            <button onclick="editProduct('${p.id}')" class="text-xs text-cyan-400 hover:underline mr-3">Editar</button>
+            <button onclick="deleteProduct('${p.id}')" class="text-xs text-rose-400 hover:underline">Borrar</button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function openProductModal(editId = null) {
+      document.getElementById('product-form').reset();
+      document.getElementById('prod-id').value = '';
+      removeProductPhoto();
+      document.getElementById('modal-title').innerText = 'Agregar Producto';
+
+      if (editId) {
+        const p = inventory.find(i => i.id === editId);
+        if (p) {
+          document.getElementById('prod-id').value = p.id;
+          document.getElementById('prod-barcode').value = p.barcode;
+          document.getElementById('prod-name').value = p.name;
+          document.getElementById('prod-shelf').value = p.shelf || '';
+          document.getElementById('prod-level').value = p.level || '';
+          document.getElementById('prod-supplier').value = p.supplier || '';
+          document.getElementById('prod-cost').value = p.cost;
+          document.getElementById('prod-price').value = p.price;
+          document.getElementById('prod-stock').value = p.stock;
+          
+          if (p.photo) {
+            setProductPhotoData(p.photo);
+          }
+
+          document.getElementById('modal-title').innerText = 'Editar Producto';
+        }
+      }
+
+      document.getElementById('product-modal').classList.remove('hidden');
+    }
+
+    function closeProductModal() {
+      document.getElementById('product-modal').classList.add('hidden');
+    }
+
+    function handleProductFormSubmit(e) {
+      e.preventDefault();
+      const id = document.getElementById('prod-id').value;
+      const barcode = document.getElementById('prod-barcode').value.trim();
+      const name = document.getElementById('prod-name').value.trim();
+      const shelf = document.getElementById('prod-shelf').value.trim();
+      const level = document.getElementById('prod-level').value.trim();
+      const supplier = document.getElementById('prod-supplier').value.trim();
+      const photo = document.getElementById('prod-photo-data').value;
+      const cost = parseFloat(document.getElementById('prod-cost').value);
+      const price = parseFloat(document.getElementById('prod-price').value);
+      const stock = parseFloat(document.getElementById('prod-stock').value);
+
+      const duplicate = inventory.find(p => p.barcode === barcode && p.id !== id);
+      if (duplicate) {
+        alert(`¡Error! El código de barras "${barcode}" ya pertenece al producto "${duplicate.name}". Usa un código distinto.`);
+        return;
+      }
+
+      if (id) {
+        const p = inventory.find(i => i.id === id);
+        if (p) Object.assign(p, { barcode, name, shelf, level, supplier, photo, cost, price, stock });
+      } else {
+        inventory.push({ id: Date.now().toString(), barcode, name, shelf, level, supplier, photo, cost, price, stock });
+      }
+
+      saveData();
+      closeProductModal();
+      renderInventoryTable();
+      renderProductCatalog();
+    }
+
+    function editProduct(id) {
+      openProductModal(id);
+    }
+
+    function deleteProduct(id) {
+      if (confirm('¿Eliminar este producto del inventario?')) {
+        inventory = inventory.filter(i => i.id !== id);
+        saveData();
+        renderInventoryTable();
+        renderProductCatalog();
+      }
+    }
+
+    // Clients Credit & Multi-Item Debt Payment Management
+    function toggleCreditItemSelection(clientId, historyId, itemId) {
+      if (!selectedCreditItems[clientId]) {
+        selectedCreditItems[clientId] = [];
+      }
+      const itemKey = `${historyId}_${itemId}`;
+      const idx = selectedCreditItems[clientId].indexOf(itemKey);
+      if (idx >= 0) {
+        selectedCreditItems[clientId].splice(idx, 1);
+      } else {
+        selectedCreditItems[clientId].push(itemKey);
+      }
+      renderClientsGrid();
+    }
+
+    function renderClientsGrid() {
+      const grid = document.getElementById('clients-cards-grid');
+      grid.innerHTML = '';
+
+      clients.forEach(c => {
+        const clientSelectedKeys = selectedCreditItems[c.id] || [];
+        let selectedTotalSum = 0;
+        let selectedItemsList = [];
+
+        // Calculate sum of multi-selected items for this client
+        c.history.forEach(h => {
+          if (h.type === 'FIADO' && h.items) {
+            h.items.forEach(i => {
+              const itemKey = `${h.id}_${i.id}`;
+              if (clientSelectedKeys.includes(itemKey) && !i.paid) {
+                const itemTotal = i.price * i.qty;
+                selectedTotalSum += itemTotal;
+                selectedItemsList.push({ historyId: h.id, item: i, total: itemTotal });
+              }
+            });
+          }
+        });
+
+        const card = document.createElement('div');
+        card.className = 'bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col justify-between';
+        card.innerHTML = `
+          <div>
+            <div class="flex justify-between items-start mb-2">
+              <div>
+                <h3 class="font-bold text-slate-100 text-base">${c.name}</h3>
+                <p class="text-xs text-slate-400">${c.phone || 'Sin teléfono'}</p>
+              </div>
+              <span class="px-2.5 py-1 rounded-lg text-xs font-bold ${c.debt > 0 ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'}">
+                Debe: S/ ${c.debt.toFixed(2)}
+              </span>
+            </div>
+
+            <div class="mt-3 border-t border-slate-800 pt-3">
+              <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block mb-2">Últimos Movimientos</span>
+              <div class="space-y-2 max-h-56 overflow-y-auto pr-1">
+                ${c.history && c.history.length > 0 ? c.history.slice(0, 8).map(h => `
+                  <div class="text-xs bg-slate-950 p-2.5 rounded-lg border border-slate-800 space-y-1">
+                    <div class="flex justify-between items-center">
+                      <span class="${h.type === 'FIADO' ? (h.paid ? 'text-slate-500 line-through' : 'text-rose-400 font-bold') : 'text-emerald-400 font-bold'}">
+                        ${h.type}${h.paid ? '(PAGADO)' : ''}
+                      </span>
+                      <div class="flex items-center gap-2">
+                        <span class="font-bold ${h.paid ? 'text-slate-500 line-through' : 'text-slate-200'}">S/ ${h.amount.toFixed(2)}</span>${h.type === 'ABONO' ? `
+                          <button onclick="viewAbonoBoleta('${c.id}', '${h.id || h.date}')" class="px-1.5 py-0.5 bg-slate-800 hover:bg-slate-700 text-cyan-400 text-[10px] rounded border border-slate-700">
+                            Boleta
+                          </button>
+                        ` : ''}
+                      </div>
+                    </div>
+
+                    ${h.items ? `
+                      <div class="text-[11px] border-t border-slate-900 pt-1.5 space-y-1">
+                        ${h.items.map(i => {
+                          const itemTotal = i.price * i.qty;
+                          const itemKey = `${h.id}_${i.id}`;
+                          const isChecked = clientSelectedKeys.includes(itemKey);
+
+                          return `
+                            <div class="flex justify-between items-center bg-slate-900/60 px-2 py-1 rounded">
+                              <div class="flex items-center gap-2">
+                                ${!i.paid && h.type === 'FIADO' ? `
+                                  <input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleCreditItemSelection('${c.id}', '${h.id}', '${i.id}')" class="w-3.5 h-3.5 accent-emerald-500 rounded cursor-pointer" />
+                                ` : ''}
+                                <span class="${i.paid ? 'text-slate-500 line-through' : 'text-slate-300'}">${i.qty}x${i.name}</span>
+                              </div>
+                              <div class="flex items-center gap-1.5">
+                                <span class="font-semibold text-slate-200">S/ ${itemTotal.toFixed(2)}</span>${i.paid ? `<span class="text-[9px] text-emerald-400 font-semibold">✓ Pagado</span>` : ''}
+                              </div>
+                            </div>
+                          `;
+                        }).join('')}
+                      </div>
+                    ` : ''}
+
+                    <div class="text-[9px] text-slate-500 text-right">${h.date}</div>
+                  </div>
+                `).join('') : '<p class="text-xs text-slate-500 italic">Sin movimientos registrados</p>'}
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-4 pt-3 border-t border-slate-800 space-y-2">
+            ${selectedTotalSum > 0 ? `
+              <button onclick="paySelectedCreditItems('${c.id}')" class="w-full py-2 bg-emerald-500 hover:bg-emerald-400 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-1.5">
+                <i data-lucide="check-square" class="w-4 h-4"></i>
+                Pagar Seleccionados (S/ ${selectedTotalSum.toFixed(2)})
+              </button>
+            ` : ''}
+            <div class="flex gap-2">
+              <button onclick="payDebtPrompt('${c.id}')" class="flex-1 py-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 rounded-xl text-xs font-semibold transition">
+                Abono General / Libre
+              </button>
+              <button onclick="deleteClient('${c.id}')" class="py-2 px-3 border border-slate-800 text-rose-400 hover:bg-rose-500/10 rounded-xl text-xs font-semibold transition">
+                Eliminar
+              </button>
+            </div>
+          </div>
+        `;
+        grid.appendChild(card);
+      });
+      lucide.createIcons();
+    }
+
+    function paySelectedCreditItems(clientId) {
+      const client = clients.find(c => c.id === clientId);
+      if (!client) return;
+
+      const clientSelectedKeys = selectedCreditItems[clientId] || [];
+      if (clientSelectedKeys.length === 0) return;
+
+      let totalToPay = 0;
+      let totalCostToPay = 0;
+      let itemsPaidList = [];
+
+      client.history.forEach(h => {
+        if (h.type === 'FIADO' && h.items) {
+          h.items.forEach(i => {
+            const itemKey = `${h.id}_${i.id}`;
+            if (clientSelectedKeys.includes(itemKey) && !i.paid) {
+              const itemTotal = i.price * i.qty;
+              const itemCostTotal = (i.cost || (i.price * 0.8)) * i.qty; // fallback if cost missing
+              
+              totalToPay += itemTotal;
+              totalCostToPay += itemCostTotal;
+              i.paid = true;
+              itemsPaidList.push({ name: i.name, qty: i.qty, price: i.price, total: itemTotal });
+            }
+          });
+
+          const allItemsPaid = h.items.every(i => i.paid);
+          if (allItemsPaid) h.paid = true;
+        }
+      });
+
+      if (totalToPay <= 0) return;
+
+      const payTypeSelect = prompt(`Pagar ${itemsPaidList.length} producto(s) por S/ ${totalToPay.toFixed(2)}:\n1 = Efectivo\n2 = Yape / Plin`, '1');
+      
+      // STRICT PAYMENT METHOD VALIDATION
+      if (payTypeSelect !== '1' && payTypeSelect !== '2') {
+        alert('Opción no válida. Debes ingresar 1 para Efectivo o 2 para Yape/Plin. Operación cancelada.');
+        return;
+      }
+
+      const payType = payTypeSelect === '2' ? 'yape' : 'cash';
+
+      const prevDebt = client.debt;
+      const newDebt = Math.max(0, client.debt - totalToPay);
+      client.debt = newDebt;
+
+      // Real Profit on Settled Items
+      const realProfit = Math.max(0, totalToPay - totalCostToPay);
+
+      // Clear selection
+      selectedCreditItems[clientId] = [];
+
+      // Record in Client History
+      const abonoRecord = {
+        id: Date.now().toString(),
+        date: new Date().toLocaleString('es-PE'),
+        type: 'ABONO',
+        clientName: client.name,
+        prevDebt: prevDebt,
+        amount: totalToPay,
+        remDebt: newDebt,
+        payType: payType,
+        itemsPaid: itemsPaidList
+      };
+
+      client.history.unshift(abonoRecord);
+
+      // Record Cash Revenue & Real Profit in Sales History
+      salesHistory.unshift({
+        id: Date.now().toString(),
+        timestamp: new Date().toISOString(),
+        date: new Date().toLocaleString('es-PE'),
+        items: itemsPaidList.map(i => ({ name: `Cancelación Fiado: ${i.name}`, qty: i.qty, price: i.price })),
+        subtotal: totalToPay,
+        discount: 0,
+        total: totalToPay,
+        profit: realProfit, // ACCURATE REAL PROFIT
+        payType: payType,
+        clientId: client.id,
+        clientName: client.name,
+        given: totalToPay,
+        change: 0
+      });
+
+      saveData();
+      renderClientsGrid();
+      renderClientSelect();
+      renderSalesHistory();
+
+      openAbonoBoletaModal(abonoRecord);
+    }
+
+    function payDebtPrompt(clientId) {
+      const client = clients.find(c => c.id === clientId);
+      if (!client) return;
+
+      if (client.debt <= 0) {
+        alert(`${client.name} no tiene ninguna deuda pendiente.`);
+        return;
+      }
+
+      const amountStr = prompt(`Registrar abono de ${client.name}\n(Deuda actual: S/ ${client.debt.toFixed(2)}):`);
+      const amount = parseFloat(amountStr);
+
+      if (!amount || amount <= 0) return;
+
+      const payTypeSelect = prompt('Método de pago:\n1 = Efectivo\n2 = Yape / Plin', '1');
+      
+      // STRICT PAYMENT METHOD VALIDATION
+      if (payTypeSelect !== '1' && payTypeSelect !== '2') {
+        alert('Opción no válida. Debes ingresar 1 para Efectivo o 2 para Yape/Plin. Operación cancelada.');
+        return;
+      }
+
+      const payType = payTypeSelect === '2' ? 'yape' : 'cash';
+
+      const prevDebt = client.debt;
+      const newDebt = Math.max(0, client.debt - amount);
+      client.debt = newDebt;
+
+      // Estimate Average Margin for General Partial Payment (e.g. ~20% profit margin)
+      const estimatedMargin = 0.20;
+      const proportionalProfit = amount * estimatedMargin;
+
+      const abonoRecord = {
+        id: Date.now().toString(),
+        date: new Date().toLocaleString('es-PE'),
+        type: 'ABONO',
+        clientName: client.name,
+        prevDebt: prevDebt,
+        amount: amount,
+        remDebt: newDebt,
+        payType: payType,
+        itemsPaid: null
+      };
+
+      client.history.unshift(abonoRecord);
+
+      salesHistory.unshift({
+        id: Date.now().toString(),
+        timestamp: new Date().toISOString(),
+        date: new Date().toLocaleString('es-PE'),
+        items: [{ name: `Abono Libre (${client.name})`, qty: 1, price: amount }],
+        subtotal: amount,
+        discount: 0,
+        total: amount,
+        profit: proportionalProfit, // ACCURATE PROPORTIONAL PROFIT
+        payType: payType,
+        clientId: client.id,
+        clientName: client.name,
+        given: amount,
+        change: 0
+      });
+
+      saveData();
+      renderClientsGrid();
+      renderClientSelect();
+      renderSalesHistory();
+
+      openAbonoBoletaModal(abonoRecord);
+    }
+
+    function openAbonoBoletaModal(abono) {
+      activeAbonoForBoleta = abono;
+      document.getElementById('abono-boleta-date').innerText = `Fecha: ${abono.date}`;
+      document.getElementById('abono-boleta-client').innerText = `Cliente: ${abono.clientName}`;
+
+      const itemsBox = document.getElementById('abono-items-paid-box');
+      const itemsList = document.getElementById('abono-items-list');
+
+      if (abono.itemsPaid && abono.itemsPaid.length > 0) {
+        itemsBox.classList.remove('hidden');
+        itemsList.innerHTML = '';
+        abono.itemsPaid.forEach(i => {
+          const row = document.createElement('div');
+          row.className = 'flex justify-between text-[11px] text-slate-300';
+          row.innerHTML = `<span>✓ ${i.qty}x ${i.name}</span> <span>S/ ${i.total.toFixed(2)}</span>`;
+          itemsList.appendChild(row);
+        });
+      } else {
+        itemsBox.classList.add('hidden');
+      }
+
+      document.getElementById('abono-boleta-prev-debt').innerText = `S/ ${abono.prevDebt.toFixed(2)}`;
+      document.getElementById('abono-boleta-amount').innerText = `S/ ${abono.amount.toFixed(2)}`;
+      document.getElementById('abono-boleta-pay-type').innerText = abono.payType === 'yape' ? 'Yape / Plin' : 'Efectivo';
+      document.getElementById('abono-boleta-rem-debt').innerText = `S/ ${abono.remDebt.toFixed(2)}`;
+
+      document.getElementById('abono-boleta-modal').classList.remove('hidden');
+      lucide.createIcons();
+    }
+
+    function shareAbonoWhatsApp() {
+      if (!activeAbonoForBoleta) return;
+      const a = activeAbonoForBoleta;
+
+      let msg = `🧾 *BODEGA "MI TIENDA"*\n`;
+      msg += `*Comprobante de Pago / Cancelación*\n`;
+      msg += `📅 Fecha: ${a.date}\n`;
+      msg += `👤 Cliente: ${a.clientName}\n`;
+      msg += `--------------------------------\n`;
+
+      if (a.itemsPaid && a.itemsPaid.length > 0) {
+        msg += `*Productos Cancelados:*\n`;
+        a.itemsPaid.forEach(i => {
+          msg += `• ${i.qty}x ${i.name} = S/ ${i.total.toFixed(2)}\n`;
+        });
+        msg += `--------------------------------\n`;
+      }
+
+      msg += `📉 Deuda Anterior: S/ ${a.prevDebt.toFixed(2)}\n`;
+      msg += `💵 *Monto Pagado Hoy: S/ ${a.amount.toFixed(2)}*\n`;
+      msg += `💳 Método de Pago: ${a.payType === 'yape' ? 'Yape / Plin' : 'Efectivo'}\n`;
+      msg += `--------------------------------\n`;
+      msg += `📌 *Deuda Restante: S/ ${a.remDebt.toFixed(2)}*\n\n`;
+      msg += `¡Gracias por su pago puntual! 🙌`;
+
+      const encodedMsg = encodeURIComponent(msg);
+      window.open(`https://wa.me/?text=${encodedMsg}`, '_blank');
+    }
+
+    function viewAbonoBoleta(clientId, abonoKey) {
+      const client = clients.find(c => c.id === clientId);
+      if (!client) return;
+
+      const abono = client.history.find(h => (h.id && h.id === abonoKey) || h.date === abonoKey);
+      if (abono) {
+        openAbonoBoletaModal(abono);
+      }
+    }
+
+    function closeAbonoBoletaModal() {
+      document.getElementById('abono-boleta-modal').classList.add('hidden');
+      activeAbonoForBoleta = null;
+    }
+
+    function deleteClient(clientId) {
+      if (confirm('¿Eliminar cliente?')) {
+        clients = clients.filter(c => c.id !== clientId);
+        saveData();
+        renderClientsGrid();
+        renderClientSelect();
+      }
+    }
+
+    // Daily & Monthly Reports Tab
+    function clearSalesHistory() {
+      if (confirm('¿Estás seguro de vaciar el historial de ventas? Se reiniciarán las métricas de caja.')) {
+        salesHistory = [];
+        saveData();
+        renderSalesHistory();
+      }
+    }
+
+    function renderSalesHistory() {
+      const now = new Date();
+      const todayStr = now.toLocaleDateString('es-PE');
+      const currentMonth = now.getMonth();
+      const currentYear = now.getFullYear();
+
+      let salesToday = 0;
+      let profitToday = 0;
+      let salesMonth = 0;
+      let profitMonth = 0;
+
+      const container = document.getElementById('sales-history-list');
+      container.innerHTML = '';
+
+      salesHistory.forEach(sale => {
+        const saleDate = new Date(sale.timestamp || sale.date);
+        const isToday = saleDate.toLocaleDateString('es-PE') === todayStr;
+        const isThisMonth = saleDate.getMonth() === currentMonth && saleDate.getFullYear() === currentYear;
+
+        if (isToday) {
+          salesToday += sale.total;
+          profitToday += sale.profit;
+        }
+
+        if (isThisMonth) {
+          salesMonth += sale.total;
+          profitMonth += sale.profit;
+        }
+
+        const card = document.createElement('div');
+        card.className = 'bg-slate-950 border border-slate-800 p-3.5 rounded-xl text-xs flex justify-between items-center';
+        card.innerHTML = `
+          <div>
+            <div class="font-bold text-slate-200">
+              Venta S/ ${sale.total.toFixed(2)} 
+              <span class="text-[10px] text-slate-500 font-normal">(${sale.payType.toUpperCase()}${sale.clientName ? `: ${sale.clientName}` : ''})</span>
+            </div>
+            <div class="text-[10px] text-slate-500 mt-0.5">${sale.date} • ${sale.items.length} productos</div>
+          </div>
+          <div class="flex items-center gap-3">
+            <div class="text-right">
+              <div class="text-emerald-400 font-bold">+ S/ ${sale.profit.toFixed(2)} ganancia</div>
+              ${sale.discount > 0 ? `<div class="text-[10px] text-amber-400">Desc: -S/ ${sale.discount.toFixed(2)}</div>` : ''}
+            </div>
+            <button onclick="viewPastBoleta('${sale.id}')" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-cyan-400 rounded-lg text-[11px] font-semibold border border-slate-700 transition flex items-center gap-1">
+              <i data-lucide="file-text" class="w-3 h-3"></i> Boleta
+            </button>
+          </div>
+        `;
+        container.appendChild(card);
+      });
+
+      document.getElementById('stat-sales-today').innerText = `S/ ${salesToday.toFixed(2)}`;
+      document.getElementById('stat-profit-today').innerText = `S/ ${profitToday.toFixed(2)}`;
+      document.getElementById('stat-sales-month').innerText = `S/ ${salesMonth.toFixed(2)}`;
+      document.getElementById('stat-profit-month').innerText = `S/ ${profitMonth.toFixed(2)}`;
+      lucide.createIcons();
+    }
+
+    // Export to Excel Engine
+    function exportToExcel(type) {
+      let data = [];
+      let filename = 'reporte.xlsx';
+
+      if (type === 'inventory') {
+        filename = `Inventario_Bodega_${new Date().toISOString().slice(0, 10)}.xlsx`;
+        data = inventory.map(p => ({
+          'Código': p.barcode,
+          'Producto': p.name,
+          'Estante': p.shelf || 'N/A',
+          'Nivel': p.level || 'N/A',
+          'Proveedor': p.supplier || 'N/A',
+          'Precio Costo (S/)': p.cost,
+          'Precio Venta (S/)': p.price,
+          'Stock Actual': p.stock,
+          'Vendidos este Mes': getMonthlySalesByProduct(p.id)
+        }));
+      } else if (type === 'sales') {
+        filename = `Historial_Ventas_${new Date().toISOString().slice(0, 10)}.xlsx`;
+        data = salesHistory.map(s => ({
+          'Fecha': s.date,
+          'Total Venta (S/)': s.total,
+          'Ganancia Neta (S/)': s.profit,
+          'Descuento (S/)': s.discount || 0,
+          'Método Pago': s.payType,
+          'Cliente': s.clientName || 'N/A',
+          'Productos': s.items.map(i => `${i.qty}x ${i.name}`).join(' | ')
+        }));
+      } else if (type === 'credits') {
+        filename = `Clientes_Fiados_${new Date().toISOString().slice(0, 10)}.xlsx`;
+        data = clients.map(c => ({
+          'Cliente': c.name,
+          'Teléfono': c.phone || 'N/A',
+          'Deuda Actual (S/)': c.debt
+        }));
+      }
+
+      const worksheet = XLSX.utils.json_to_sheet(data);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Reporte');
+      XLSX.writeFile(workbook, filename);
+    }
+  </script>
+</body>
+</html>
